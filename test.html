@@ -1,0 +1,1072 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
+<title>Drone flight nadir area tests</title>
+    <!--link href='https://www.mapbox.com/base/latest/base.css' rel='stylesheet' />
+<script src='https://api.tiles.mapbox.com/mapbox.js/v2.1.9/mapbox.js'></script>
+<link href='https://api.tiles.mapbox.com/mapbox.js/v2.1.9/mapbox.css' rel='stylesheet' /-->
+
+<!--style type="text/css"></style>  <link rel="canonical" href="https://labs.mapbox.com/bites/00332/" -->
+
+<script src="three.js"></script>
+<script src="OrbitControls.js"></script>
+<script src="dat.gui.min.0.7.2.js"></script>
+<script src="delaunator.3.0.2.js"></script>
+<script src="perlin.js"></script>
+<!--script src="chroma.min.js"></script-->
+
+</head>
+<body>
+<table style="width:95%;border:1px solid;border-color:#000000">
+<tr>
+
+<td style="width:75%">
+
+    <div name ="viewport" id = "viewport" style="width:100%;height:600px;border:1px blue solid">
+    <!--canvas id="cnv" class="abs">
+    </canvas-->
+    </div>
+
+</td>
+<td>
+
+
+<table>
+
+<tr>
+
+<td>
+<label for="loadcoords" id="filename">No file selected yet</label>
+<button name = "loadcoords" id = "loadcoords" onclick="loadcoords();"> Load coordinates file </button>
+<input id="file-input" type="file" name="name" style="display: none;" onchange= "filefound();"/>
+<br/>
+
+<label for="header" id="headerlbl">First line is table header</label>
+<input type="checkbox" id="header" name="header" checked>
+
+
+<button name = "readcoords" id = "readcoords" onclick="readcoords();"> Read coordinates file </button>
+<pre id="file-contents"></pre>
+<br/>
+
+
+<label for="zoom" id="zoomlbl">Enter zoom value</label>
+<input type="text" id="zoom" name="zoom" value="14">
+
+<button name = "getimages" id = "getimages" onclick="getimages();"> Load and 
+cache tiles </button>
+<br/>
+
+<label for="resol" id="resollbl">Enter resolution in meter</label>
+<input type="text" id="resol" name="resol" value="30">
+<br/>
+
+<label for="padding" id="paddinglbl">Enter padding in degrees</label>
+<input type="text" id="padding" name="padding" value="0.005">
+
+<br/>
+
+<button name = "createTerrain" id = "createTerrain" onclick="createTerrain();" disabled="true"> Create Terrain </button>
+
+<br/>
+
+<button name = "createLines" id = "createLines" onclick="createLines();" disabled="true"> Create Lines </button>
+
+<br/>
+<label for="dist" id="distlbl">Enter distance in meter</label>
+<input type="text" id="dist" name="dist" value="200">
+<br/>
+<button name = "movedrone" id = "movedrone" onclick="movedrone();" disabled="true"> Move Drone </button>
+<br/>
+<button name = "movedrone" id = "movedroneall" onclick="movedroneall();" disabled="true"> Move Drone All </button>
+
+</td>
+
+</tr>
+
+</table>
+</td>
+
+</tr>
+</table>
+
+<script type = "text/javascript">
+
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera( 60,1, 0.01, 5000 );
+
+const renderer = new THREE.WebGLRenderer();
+document.getElementById('viewport').appendChild( renderer.domElement );
+
+    var ww = document.getElementById('viewport').clientwidth;
+    var hh = document.getElementById('viewport').clientheight;
+
+    var controls = new THREE.OrbitControls(camera, renderer.domElement);
+
+    var light = new THREE.DirectionalLight(0xffffff, 1.5);
+    light.position.setScalar(100);
+    scene.add(light);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+
+    console.log(ww,hh);
+    renderer.setSize(ww,hh,false);
+
+    function render() {
+    if (resize(renderer)) {
+        camera.aspect = renderer.domElement.clientWidth / renderer.domElement.clientHeight;
+        camera.updateProjectionMatrix();
+    }
+    
+    renderer.render(scene, camera);
+    requestAnimationFrame(render);
+    }
+
+    function resize(renderer) {
+    var ww = document.getElementById('viewport').width;
+    var hh = document.getElementById('viewport').height;
+    
+    if (! ww ) ww = 600;
+    if (! hh ) hh = 600;
+    
+    const needResize = renderer.domElement.width !== ww || renderer.domElement.height !== hh;
+    if (needResize) {
+        renderer.setSize(ww, hh, false);
+    }
+    return needResize;
+    }
+
+    render();
+
+
+
+var allTextLines = [];
+var allLats = [];
+var allLons = [];
+var allHgts = [];
+
+var zoom = -1;
+var allTileX = [];
+var allTileY = [];
+
+var tileIdxs = {};
+
+var allImages = [];
+var allLoaded = [];
+
+var minlon = 0;
+var minlat = 0;
+var maxlon = 0;
+var maxlat = 0;
+
+var allSampleLats = [];
+var allSampleLons = [];
+var allSampleHgts = [];
+
+var points3d = [];
+
+var allcenter = [];
+var allsize = 0;
+
+var allDroneLons = [];
+var allDroneLats = [];
+var allDroneHgts = [];
+var allDroneHds  = [];
+var allDronetlts = [];
+
+const dgeometry = new THREE.CylinderBufferGeometry( 18, 18, 16, 16 , thetaStart=Math.PI*(3.0/2.0 - 1/6, thetaLength=Math.PI*(2.0-1.0/3.0)));
+const dmaterial = new THREE.MeshBasicMaterial( {color: 0x22ff88} );
+const drone = new THREE.Mesh( dgeometry, dmaterial );
+
+scene.add(drone);
+
+var currWaypoint = 0;
+const RADIUS_OF_EARTH_IN_M = 6371000;
+
+
+var directlineP = [];
+
+directlineP.push(new THREE.Vector3(0,0,0));
+directlineP.push(new THREE.Vector3(0,0,0));
+
+const directline = new THREE.BufferGeometry().setFromPoints( directlineP );
+
+const mdirect = new THREE.LineBasicMaterial( { color: 0x0000ff ,linewidth: 2} );
+const dline = new THREE.Line( directline, mdirect );
+
+scene.add(dline);
+
+function removeObject3D(object3D) {
+    if (!(object3D instanceof THREE.Object3D)) return false;
+
+    // for better memory management and performance
+    object3D.geometry.dispose();
+    if (object3D.material instanceof Array) {
+        // for better memory management and performance
+        object3D.material.forEach(material => material.dispose());
+    } else {
+        // for better memory management and performance
+        object3D.material.dispose();
+    }
+    object3D.removeFromParent(); // the parent might be the scene or another Object3D, but it is sure to be removed this way
+    return true;
+}
+
+
+function loadcoords() {
+
+    document.getElementById('file-input').click();
+    
+} 
+
+function filefound() {
+
+    var path =  document.getElementById('file-input').files[0].name;
+    
+    document.getElementById('filename').innerHTML = path;
+}
+
+function readcoords() {
+
+   if(document.querySelector("#file-input").files.length == 0) {
+        alert('Error : No file selected');
+        return;
+    }
+
+    // file selected by user
+    let file = document.querySelector("#file-input").files[0];
+
+    // file name
+    let file_name = file.name;
+
+    // file MIME type
+    let file_type = file.type;
+
+    // file size in bytes
+    let file_size = file.size;
+    
+    let reader = new FileReader();
+
+    // event fired when file reading finished
+    reader.addEventListener('load', function(e) {
+    // contents of the file
+        let text = e.target.result;
+        
+        
+        allTextLines = text.split(/\r\n|\n/);
+        
+        if (document.getElementById("header").checked) allTextLines.shift()
+        if (allTextLines[allTextLines.length-1] == '') allTextLines.pop();
+        console.log(allTextLines);
+        
+        //getimages();
+        
+    });
+
+    // event fired when file reading failed
+    reader.addEventListener('error', function() {
+        alert('Error : Failed to read file');
+    });
+
+    // read file as text file
+    reader.readAsText(file);
+
+}
+
+/*
+
+*/
+
+async function getimages() {
+
+    //get boundingbox 
+    
+    
+    
+    for (i = 0; i < allTextLines.length; i++){
+        
+        var vals = allTextLines[i].split(',');
+        
+        var lat = parseFloat(vals[0]);
+        var lon = parseFloat(vals[1]);
+        var hgt = parseFloat(vals[5]);
+    
+        allLats.push(lat);
+        allLons.push(lon);
+        allHgts.push(hgt);
+    }
+    
+    console.log("loaded lat and lons");
+    
+    zoom = parseFloat(document.getElementById("zoom").value);
+    
+    console.log(allLons);
+    console.log(allLats);
+    
+    minlon = Math.min(...allLons) ;
+    minlat = Math.min(...allLats) ;
+    maxlon = Math.max(...allLons) ;
+    maxlat = Math.max(...allLats) ;
+    
+    console.log(minlon,minlat, maxlon,maxlat);
+    
+    var padding   = parseFloat(document.getElementById("padding").value);
+    
+    
+    minlon = Math.min(...allLons) - padding;
+    minlat = Math.min(...allLats) - padding;
+    maxlon = Math.max(...allLons) + padding;
+    maxlat = Math.max(...allLats) + padding;
+    
+    console.log(minlon,minlat, maxlon,maxlat);
+    
+    var tileBotLeftX = lon2tile(minlon, zoom);
+    var tileBotLeftY = lat2tile(minlat, zoom);
+    
+    
+    var tileTopRghtX = lon2tile(maxlon, zoom);
+    var tileTopRghtY = lat2tile(maxlat, zoom);
+    
+    //var total = ((tileTopRghtY - tileBotLeftY) + 1) * ((tileTopRghtX - tileBotLeftX) + 1)
+    
+    console.log("min lon = " + minlon.toString());
+    console.log("max lon = " + maxlon.toString());
+    console.log("min lat = " + minlat.toString());
+    console.log("max lat = " + maxlat.toString());
+    
+    console.log("bottom left x = " + tileBotLeftX.toString());
+    console.log("top right x = " + tileTopRghtX.toString());
+    console.log("bottom left y = " + tileBotLeftY.toString());
+    console.log("top right y = " + tileTopRghtY.toString());
+    
+    for ( i = tileBotLeftX; i <= tileTopRghtX; i++) {
+        
+        for ( j = tileTopRghtY; j <= tileBotLeftY; j++) {
+        
+            allImages.push (new Image());
+            allLoaded.push ({});
+            
+            allTileX.push(i);
+            allTileY.push(j);
+            
+        }
+    }
+    
+    for ( i = tileBotLeftX; i <= tileTopRghtX; i++) {
+        
+        for ( j = tileTopRghtY; j <= tileBotLeftY; j++) {
+        
+            idx = ((tileBotLeftY - tileTopRghtY ) + 1) * (i-tileBotLeftX) + (j-tileTopRghtY);
+            
+            // console.log(i);
+            // console.log(j);
+            
+            console.log("trying image #" + idx.toString());
+            
+            
+            
+            const url = "https://api.mapbox.com/v4/mapbox.terrain-rgb/"+zoom.toString()+"/"+i.toString()+"/"+j.toString()+".png?access_token=pk.eyJ1Ijoic2VhbmthaG4iLCJhIjoiY2w0bXozZGRzMTdzejNvbnhrczJxcnI4cSJ9.yvJfM2CcBQo92YdWwW7_Ng";
+            
+            
+            
+            const options = {
+                method: "GET"
+            }
+            
+            let response = await fetch(url, options)
+            
+            if (response.status === 200) {
+            
+                const imageBlob = await response.blob()
+                const imageObjectURL = URL.createObjectURL(imageBlob);
+            
+//                 const image = document.createElement('img')
+//                 image.src = imageObjectURL
+                        
+                allImages[idx].src = imageObjectURL
+                tileIdxs[i.toString() + "," + j.toString()] = idx;
+                //const container = document.getElementById("your-container")
+                //container.append(image)
+                
+//                 const container = document.getElementById("viewport")
+//                 container.append(image)
+            }
+            
+            
+            //console.log (allImages[idx].src );
+        }
+    
+    }
+    
+    
+    activateBtnTerrainView();
+    
+}
+
+
+function activateBtnTerrainView() {
+
+    document.getElementById("createTerrain").disabled = false;
+
+}
+
+async function createTerrain() {
+
+    var width = getdistance(minlon, maxlon, (minlat+maxlat)/2,(minlat+maxlat)/2);
+    
+    var height = getdistance((minlon + maxlon)/2, (minlon + maxlon)/2, minlat,maxlat);
+    
+    var sampleRes = parseFloat(document.getElementById("resol").value);
+    
+    var subdivLat = Math.floor(height / sampleRes)+1;
+    var subdivLon = Math.floor(width / sampleRes)+1;
+   
+    var latstep = (maxlat - minlat) / subdivLat;
+    var lonstep = (maxlon - minlon) / subdivLon;
+    
+    
+    //var geom = new THREE.Geometry;
+    //var scale = chroma.scale(['blue', 'green', 'red']).domain([0, 50]);
+    
+    var width = 0;
+    var depth = 0;
+    
+    for (i = minlon  ; i <= maxlon ; i+= lonstep) {
+        width ++;
+        for (j = minlat ; j <=maxlat; j+= latstep) {
+            depth ++;
+        
+            var ii = lon2tile(i,zoom);
+            var jj = lat2tile(j,zoom);
+            
+            var idx = ii.toString() + "," + jj.toString();
+            if (! idx in tileIdxs)  {
+            
+            
+                allImages.push ({});
+                allLoaded.push ({});
+                
+                allTileX.push(i);
+                allTileY.push(j);
+                const url = "https://api.mapbox.com/v4/mapbox.terrain-rgb/"+zoom.toString()+"/"+i.toString()+"/"+j.toString()+".png?access_token=pk.eyJ1Ijoic2VhbmthaG4iLCJhIjoiY2w0bXozZGRzMTdzejNvbnhrczJxcnI4cSJ9.yvJfM2CcBQo92YdWwW7_Ng";
+            
+            
+            
+                const options = {
+                    method: "GET"
+                }
+                
+                let response = await fetch(url, options)
+                
+                if (response.status === 200) {
+                
+                    const imageBlob = await response.blob()
+                    const imageObjectURL = URL.createObjectURL(imageBlob);
+            
+    //                 const image = document.createElement('img')
+    //                 image.src = imageObjectURL
+    //                 
+                    allImages[allImages.length-1].src = imageObjectURL
+                    tileIdxs[idx] = allImages.length-1;
+                    //const container = document.getElementById("your-container")
+                    //container.append(image)
+                    
+    //                 const container = document.getElementById("viewport")
+    //                 container.append(image)
+                }
+            
+            }
+            
+            
+            var lonRange = getLonRange(ii,zoom);
+            var latRange = getLatRange(jj,zoom);
+            
+            var minlonTile = getMinlonTile(ii, zoom);
+            var minlatTile = getMinlatTile(jj, zoom);
+            
+            var xCoord = getImagePixelXCoord(lonRange, i, minlonTile);
+            var yCoord = getImagePixelYCoord(latRange, j, minlatTile);
+            
+            allSampleLons.push(i);
+            allSampleLats.push(j);
+            
+            var el = await getHeightFromImage(tileIdxs[idx], xCoord,yCoord);
+            allSampleHgts.push(el);
+            
+            var xdist = getdistance(minlon, i, (minlat + maxlat)/2,(minlat + maxlat)/2);
+            var ydist = getdistance((minlon + maxlon)/2, (minlon + maxlon)/2, minlat,j);
+            
+            points3d.push(new THREE.Vector3(ydist, el, xdist));
+
+        }
+    }
+    
+    for(i = 0; i < allHgts.length; i++) {
+    
+        var lon = allLons[i];
+        var lat = allLats[i];
+        var hgt = allHgts[i];
+        
+        var ii = lon2tile(lon,zoom);
+        var jj = lat2tile(lat,zoom);
+        
+        var idx = ii.toString() + "," + jj.toString();
+        
+        var lonRange = getLonRange(ii,zoom);
+        var latRange = getLatRange(jj,zoom);
+        
+        var minlonTile = getMinlonTile(ii, zoom);
+        var minlatTile = getMinlatTile(jj, zoom);
+        
+        var xCoord = getImagePixelXCoord(lonRange, lon, minlonTile);
+        var yCoord = getImagePixelYCoord(latRange, lat, minlatTile);
+        
+        
+        var xdist = getdistance(minlon, lon, (minlat + maxlat)/2,(minlat + maxlat)/2);
+        var ydist = getdistance((minlon + maxlon)/2, (minlon + maxlon)/2, minlat,lat);
+        
+        points3d.push(new THREE.Vector3(ydist, hgt, xdist));
+        
+    }
+   
+    
+    var offsetEL = Math.min(...allSampleHgts) / 2;
+    
+    for( iii = 0; iii<points3d.length; iii++) {
+    
+        points3d[iii].y =  points3d[iii].y - offsetEL;
+    }
+    
+    console.log(points3d);
+    
+    var points3dLine = [];
+    
+    
+    for (m = 0; m<allHgts.length; m++) {
+        
+        var xdist = getdistance(minlon, allLons[m], (minlat + maxlat)/2,(minlat + maxlat)/2);
+        var ydist = getdistance((minlon + maxlon)/2, (minlon + maxlon)/2, minlat,allLats[m]);
+        points3dLine.push(new THREE.Vector3(ydist, allHgts[m]-offsetEL, xdist));
+        console.log(points3dLine);
+    }
+    
+    
+    const linegeometry = new THREE.BufferGeometry().setFromPoints( points3dLine );
+    
+    const material = new THREE.LineBasicMaterial( { color: 0xff00ff ,linewidth: 2} );
+    const line = new THREE.Line( linegeometry, material );
+    
+    scene.add(line);
+    
+    var linecloud = new THREE.Points(
+    linegeometry,
+    new THREE.PointsMaterial({ color: 0xcc9900, size: 5 })
+    );
+    scene.add(linecloud);
+    
+    var geom = new THREE.BufferGeometry().setFromPoints(points3d);
+    
+    var cloud = new THREE.Points(
+    geom,
+    new THREE.PointsMaterial({ color: 0x99ccff, size: 2 })
+    );
+    scene.add(cloud);
+
+    // triangulate x, z
+    var indexDelaunay = Delaunator.from(
+    points3d.map(v => {
+        return [v.x, v.z];
+    })
+    );
+
+    var meshIndex = []; // delaunay index => three.js index
+    for (let i = 0; i < indexDelaunay.triangles.length; i++){
+    meshIndex.push(indexDelaunay.triangles[i]);
+    }
+
+    geom.setIndex(meshIndex); // add three.js index to the existing geometry
+    geom.computeVertexNormals();
+    var mesh = new THREE.Mesh(
+    geom, // re-use the existing geometry
+    new THREE.MeshLambertMaterial({ color: 0x889966, wireframe: false })
+    );
+    scene.add(mesh);
+    
+    camera.left = -renderer.domElement.width / 2;
+    camera.right = renderer.domElement.width / 2;
+    camera.top = renderer.domElement.height / 2;
+    camera.bottom = -renderer.domElement.height / 2;
+    camera.near = -5000;
+    camera.far = 5000;
+
+    var offset = 1.28;
+    
+    
+    const box = new THREE.Box3().setFromObject(mesh);
+    const size = box.getSize(new THREE.Vector3()).length();
+    const center = box.getCenter(new THREE.Vector3());
+
+    console.log(center, points3d[Math.floor(points3d.length/2)]);
+    controls.reset();
+
+    allcenter = center;
+    allsize = size;
+    
+    mesh.position.x += (mesh.position.x - center.x);
+    mesh.position.y += (mesh.position.y - center.y);
+    mesh.position.z += (mesh.position.z - center.z);
+    
+    line.position.x += (line.position.x - center.x);
+    line.position.y += (line.position.y - center.y);
+    line.position.z += (line.position.z - center.z);
+    
+    cloud.position.x += (cloud.position.x - center.x);
+    cloud.position.y += (cloud.position.y - center.y);
+    cloud.position.z += (cloud.position.z - center.z);
+    
+    linecloud.position.x += (linecloud.position.x - center.x);
+    linecloud.position.y += (linecloud.position.y - center.y);
+    linecloud.position.z += (linecloud.position.z - center.z);
+    
+    controls.maxDistance = size * 10;
+    camera.near = size / 100;
+    camera.far = size * 100;
+    camera.updateProjectionMatrix();
+
+    camera.position.copy(center);
+    camera.position.x += size / 2.0;
+    camera.position.y += size / 5.0;
+    camera.position.z += size / 2.0;
+    camera.lookAt(center);
+
+    
+    
+    render();
+    console.log(center.y);
+    document.getElementById('createLines').disabled = false;
+    
+}
+
+async function createLines() {
+
+    var lineLength = 10;
+
+    var lns = new THREE.Group;
+    
+    
+    for(i = 0; i < allHgts.length; i++) {
+    
+        var lon = allLons[i];
+        var lat = allLats[i];
+        var hgt = allHgts[i];
+        
+        var ii = lon2tile(lon,zoom);
+        var jj = lat2tile(lat,zoom);
+        
+        var idx = ii.toString() + "," + jj.toString();
+        
+        var lonRange = getLonRange(ii,zoom);
+        var latRange = getLatRange(jj,zoom);
+        
+        var minlonTile = getMinlonTile(ii, zoom);
+        var minlatTile = getMinlatTile(jj, zoom);
+        
+        var xCoord = getImagePixelXCoord(lonRange, lon, minlonTile);
+        var yCoord = getImagePixelYCoord(latRange, lat, minlatTile);
+        
+        
+        var el = hgt;//await getHeightFromImage(tileIdxs[idx], xCoord,yCoord);
+        var offsetEL = Math.min(...allSampleHgts) / 2;
+    
+        
+        var xdist = getdistance(minlon, lon, (minlat + maxlat)/2,(minlat + maxlat)/2);
+        var ydist = getdistance((minlon + maxlon)/2, (minlon + maxlon)/2, minlat,lat);
+        
+        console.log("target point xdist, ydist ", xdist,ydist);
+        
+        var p1 = new THREE.Vector3(ydist, el-offsetEL, xdist) ;
+        
+        var vals = allTextLines[i].split(',');
+        var aspect = parseFloat(vals[8]);
+        aspect = 90 - aspect;
+        if ( aspect < 0) aspect = aspect + 360 ;
+        else if (aspect > 360) aspect = aspect - 360;
+        
+        var slope = parseFloat(vals[7]);
+        
+        console.log(allTextLines[i]);
+        console.log(vals);
+        console.log( aspect, slope);
+        console.log(Math.sin(aspect*Math.PI/180.00) );
+        console.log(Math.sin(aspect*Math.PI/180.00) * lineLength);
+        
+        var p2 = new THREE.Vector3(ydist + Math.sin(aspect*Math.PI/180.00) * lineLength , el-offsetEL, xdist + Math.cos(aspect*Math.PI/180.00) * lineLength) ;
+        
+        console.log(p1,p2);
+        
+        var antiaspect = aspect + 180.00;
+        
+        var p3 = new THREE.Vector3(ydist + Math.sin(antiaspect*Math.PI/180.00) * lineLength * Math.cos(slope * Math.PI/180.00) , el-offsetEL + lineLength * Math.sin(slope*Math.PI/180.00), xdist + Math.cos(antiaspect*Math.PI/180.00) * lineLength * Math.cos(slope * Math.PI/180.00)) ;
+        
+        var points3dLine_aspect = [];
+        points3dLine_aspect.push(p1);
+        points3dLine_aspect.push(p2);
+        
+        const linegeometryAspect = new THREE.BufferGeometry().setFromPoints( points3dLine_aspect );
+    
+        const materialAspect = new THREE.LineBasicMaterial( { color: 0xff0000 ,linewidth: 2} );
+        const line_aspect = new THREE.Line( linegeometryAspect, materialAspect );
+        
+        lns.add(line_aspect);
+        
+        
+        var points3dLine_slope = [];
+        points3dLine_slope.push(p1);
+        points3dLine_slope.push(p3);
+        
+        const linegeometrySlope = new THREE.BufferGeometry().setFromPoints( points3dLine_slope );
+    
+        const materialSlope = new THREE.LineBasicMaterial( { color: 0xff6600 ,linewidth: 2} );
+        const line_Slope = new THREE.Line( linegeometrySlope, materialSlope );
+        
+        lns.add(line_Slope);
+        
+        console.log(p1,p2,p3);
+    
+    }
+    
+    scene.add(lns);
+    var offset = 1.28;
+    
+    
+    
+    controls.reset();
+
+    var center = allcenter;
+    
+    lns.position.x += (lns.position.x - center.x);
+    lns.position.y += (lns.position.y - center.y);
+    lns.position.z += (lns.position.z - center.z);
+    
+    var size = allsize;
+    
+    controls.maxDistance = size * 10;
+    camera.near = size / 100;
+    camera.far = size * 100;
+    camera.updateProjectionMatrix();
+
+    camera.position.copy(center);
+    camera.position.x += size / 2.0;
+    camera.position.y += size / 5.0;
+    camera.position.z += size / 2.0;
+    camera.lookAt(center);
+
+    
+    
+    render();
+    
+    document.getElementById('movedrone').disabled = false;
+    document.getElementById('movedroneall').disabled = false;
+
+}
+
+async function movedroneall() {
+
+    allDroneLons = [];
+    allDroneLats = [];
+    allDroneHgts = [];
+    allDroneHds  = [];
+    allDronetlts = [];
+
+    currWaypoint = 0;
+    var text = "WP,Latitude,Longitude,AltitudeAMSL,UavYaw, CameraTilt\n";
+    for (i = 0 ; i < allHgts.length; i++) {
+        
+        movedrone();
+        
+        
+    }
+    
+    for (i = 0; i < allHgts.length; i++) {
+        text = text + i.toString() + ',' +  allDroneLats[i].toString() + ',' + allDroneLons[i].toString() + ',' + allDroneHgts[i].toString() + ',' +  allDroneHds [i].toString() + ',' + allDronetlts[i].toString() + "\n";
+    }
+    
+    const a = document.createElement('a');
+    const blob = new Blob([text]);
+    a.href = URL.createObjectURL(blob);
+    a.download = 'sample-flight-profile.csv';                     //filename to download
+    a.click();
+
+}
+
+async function movedrone() {
+
+    var targetLon = allLons[currWaypoint];
+    var targetLat = allLats[currWaypoint];
+    var hgt = allHgts[currWaypoint];
+    
+    var i = currWaypoint;
+    
+    var vals = allTextLines[i].split(',');
+    var aspect = parseFloat(vals[8]);
+    
+    var droneHeading = aspect + 180;
+    if(droneHeading >=360) droneHeading = droneHeading - 360;
+    
+    
+    aspect = 90 - aspect;
+    if ( aspect < 0) aspect = aspect + 360 ;
+    else if (aspect > 360) aspect = aspect - 360;
+    
+    var slope = parseFloat(vals[7]);
+    
+    
+    var cameraTilt = 90 - slope;
+    
+    var targetLat = allLats[i];
+    var targetLon = allLons[i];
+    
+    var droneDist = parseFloat(document.getElementById('dist').value);
+    var droneDistV = Math.cos(cameraTilt*Math.PI/180)*droneDist;
+    
+    var dronelat = Math.asin( Math.sin(targetLat*Math.PI/180)*Math.cos(droneDistV/RADIUS_OF_EARTH_IN_M) +
+                      Math.cos(targetLat*Math.PI/180)*Math.sin(droneDistV/RADIUS_OF_EARTH_IN_M)*Math.cos(aspect*Math.PI/180) )*180/Math.PI;
+    var dronelon = (targetLon*Math.PI/180 + Math.atan2(Math.sin(aspect*Math.PI/180)*Math.sin(droneDistV/RADIUS_OF_EARTH_IN_M)*Math.cos(targetLat*Math.PI/180),
+                           Math.cos(droneDistV/RADIUS_OF_EARTH_IN_M)-Math.sin(targetLat*Math.PI/180)*Math.sin(dronelat*Math.PI/180)))*180/Math.PI;
+                           
+    console.log(dronelat, dronelon);
+    
+    var ii = lon2tile(dronelon,zoom);
+    var jj = lat2tile(dronelat,zoom);
+    
+    var idx = ii.toString() + "," + jj.toString();
+    
+    var lonRange = getLonRange(ii,zoom);
+    var latRange = getLatRange(jj,zoom);
+    
+    var minlonTile = getMinlonTile(ii, zoom);
+    var minlatTile = getMinlatTile(jj, zoom);
+    
+    var xdist = getdistance(minlon, dronelon, (minlat + maxlat)/2,(minlat + maxlat)/2);
+    var ydist = getdistance((minlon + maxlon)/2, (minlon + maxlon)/2, minlat,dronelat);
+        
+    var xdist_g = getdistance(minlon, targetLon, (minlat + maxlat)/2,(minlat + maxlat)/2);
+    var ydist_g = getdistance((minlon + maxlon)/2, (minlon + maxlon)/2, minlat,targetLat);
+    
+    
+    var offsetEL = Math.min(...allSampleHgts) / 2;
+    
+    
+    
+    dline.geometry.attributes.position.array[0]  = ydist_g;
+    dline.geometry.attributes.position.array[1]  = hgt-offsetEL;
+    dline.geometry.attributes.position.array[2]  = xdist_g;
+    
+    
+    
+    
+    var el = Math.sin(cameraTilt*Math.PI/180)*droneDist + hgt;
+    
+    dline.geometry.attributes.position.array[3]  = ydist;
+    dline.geometry.attributes.position.array[4]  = el-offsetEL;
+    dline.geometry.attributes.position.array[5]  = xdist;
+    
+    dline.geometry.verticesNeedUpdate = true;
+    
+    var center = allcenter;
+    
+    console.log(center)
+    console.log(dline.geometry.attributes.position.array);
+    
+    
+    drone.position.x = ydist;
+    drone.position.y = el-offsetEL;
+    drone.position.z = xdist;
+    
+    scene.add(drone);
+    
+    console.log("before chane", drone.position);
+    
+    
+    var offset = 1.28;
+    
+    
+    
+    controls.reset();
+    
+    drone.position.x += (drone.position.x - center.x);
+    drone.position.y += (drone.position.y - center.y);
+    drone.position.z += (drone.position.z - center.z);
+//     //drone.position.needsUpdate = true
+    
+    console.log("after change", drone.position);
+    
+    controls.reset();
+    
+    dline.position.x += (dline.position.x - center.x);
+    dline.position.y += (dline.position.y - center.y);
+    dline.position.z += (dline.position.z - center.z);
+    
+    var size = allsize;
+    
+    controls.maxDistance = size * 10;
+    camera.near = size / 100;
+    camera.far = size * 100;
+    camera.updateProjectionMatrix();
+
+    camera.position.copy(center);
+    camera.position.x += size / 2.0;
+    camera.position.y += size / 5.0;
+    camera.position.z += size / 2.0;
+    camera.lookAt(center);
+
+    currWaypoint = currWaypoint+1;
+    if (currWaypoint >= allHgts.length) currWaypoint = 0;
+    
+    
+    
+    console.log(center);
+    console.log(drone.position);
+    console.log(dronelat, dronelon, el);
+    console.log(currWaypoint);
+    
+    var gdist = getdistance(targetLon, dronelon, targetLat, dronelat);
+    var vdist = hgt-el;
+    var tdist = Math.sqrt(gdist*gdist + vdist*vdist);
+    console.log(tdist);
+    
+    allDroneLats.push(dronelat);
+    allDroneLons.push(dronelon);
+    allDroneHds.push(droneHeading);
+    allDronetlts.push(cameraTilt);
+    allDroneHgts.push(el);
+    
+    render();
+    
+}
+
+function getdistance ( lon1, lon2, lat1, lat2) {
+
+    const toRadian = angle => (Math.PI / 180) * angle;
+    const distance = (a, b) => (Math.PI / 180) * (a - b);
+
+    const dLat = distance(lat2, lat1);
+    const dLon = distance(lon2, lon1);
+
+    lat1 = toRadian(lat1);
+    lat2 = toRadian(lat2);
+
+    // Haversine Formula
+    const a =
+    Math.pow(Math.sin(dLat / 2), 2) +
+    Math.pow(Math.sin(dLon / 2), 2) * Math.cos(lat1) * Math.cos(lat2);
+    const c = 2 * Math.asin(Math.sqrt(a));
+
+    let finalDistance = RADIUS_OF_EARTH_IN_M * c;
+
+
+    return finalDistance;
+
+}
+
+function numTiles (z) {
+
+  return(Math.pow(2,z))
+}
+
+function getImagePixelXCoord(lonRange, i, mnl) {
+
+    var rat =  (i-mnl) / lonRange;
+    return Math.floor (256 * rat);
+    
+}
+
+function getImagePixelYCoord(latRange, j, mnl) {
+
+    
+    var rat = (j-mnl) / latRange;
+    
+    //console.log(maxlat,minlat,rat,j,mnl, latRange, j-mnl);
+    return Math.floor (256 * (1-rat));
+    
+}
+
+function getLonRange(x,z) {
+
+    n = numTiles(z)
+    unit = 360 / n
+    lon1 = -180 + x * unit
+    lon2 = lon1 + unit
+    return Math.abs(lon1-lon2)
+
+}
+
+function getMinlonTile(x,z) {
+
+    n = numTiles(z)
+    unit = 360 / n
+    lon1 = -180 + x * unit
+    lon2 = lon1 + unit
+    return Math.min(lon1,lon2)
+
+}
+
+function getLatRange(y,z) {
+
+    n = numTiles(z)
+    unit = 1 / n
+    relY1 = y * unit
+    relY2 = relY1 + unit
+    lat1 = mercatorToLat(Math.PI * (1 - 2 * relY1))
+    lat2 = mercatorToLat(Math.PI * (1 - 2 * relY2))
+    return Math.abs(lat1-lat2)
+
+}
+
+function getMinlatTile(y,z) {
+
+    n = numTiles(z)
+    unit = 1 / n
+    relY1 = y * unit
+    relY2 = relY1 + unit
+    lat1 = mercatorToLat(Math.PI * (1 - 2 * relY1))
+    lat2 = mercatorToLat(Math.PI * (1 - 2 * relY2))
+    return Math.min(lat1,lat2)
+
+}
+
+function mercatorToLat(mercatorY) {
+  return Math.atan(Math.sinh(mercatorY)) *180.00 / Math.PI;
+}
+
+async function getHeightFromImage(idx, x,y){
+
+    console.log(allImages[idx]);
+    
+    var tileImg = allImages[idx];
+    
+    var canvas = document.createElement('canvas');
+    canvas.width = 256;
+    canvas.height = 256;
+    
+    var ctx = canvas.getContext('2d');
+    URL.revokeObjectURL(tileImg.src)
+    ctx.clearRect (0,0,256,256);
+    ctx.drawImage(tileImg,0,0);
+    //createImageBitmap(tileImg).then(imageBitmap=>{ctx.drawImage(imageBitmap,0,0)})
+    
+    
+    
+    var data = ctx.getImageData(x, y, 1, 1).data;
+    elevation = -10000 + ((data[0] * 256 * 256 + data[1] * 256 + data[2]) * 0.1);
+    //console.log(x,y,data, elevation)
+    return elevation;
+
+}
+
+ function lon2tile(lon,zoom) { return (Math.floor((lon+180)/360*Math.pow(2,zoom))); }
+ function lat2tile(lat,zoom)  { return (Math.floor((1-Math.log(Math.tan(lat*Math.PI/180) + 1/Math.cos(lat*Math.PI/180))/Math.PI)/2 *Math.pow(2,zoom))); }
+
+</script>
+</body>
+
+</html>

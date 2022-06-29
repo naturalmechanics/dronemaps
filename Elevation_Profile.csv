@@ -1,0 +1,4 @@
+Lat,Lng,Distance (meters),Distance (feet),Distance (miles),Elevation (meters),Elevation (feet),Slope (degrees),Aspect (degrees),Landcover,Canopy (percent)
+40.5692982991903,-111.639258609083,0,0,0.0,3322,8773,41,48,Forest,29
+40.5696923951206,-111.638862383872,30,100,0.018939388276109415,3283,55,48,327,Forest,24
+40.5700864914783,-111.638466158231,61,200,0.03787877497257955,3244,555,43,50,Forest,39
